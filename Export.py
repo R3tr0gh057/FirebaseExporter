@@ -5,9 +5,10 @@ from firebase_admin import credentials, firestore
 from tqdm import tqdm
 from rich.console import Console
 from rich.progress import Progress
+import imghdr
 
 # Initialize Firebase Admin SDK
-cred = credentials.Certificate(r"C:\Users\AAGA SUSAN ELDOSE\Downloads\xact-db-firebase-adminsdk-aznal-96fd1b31f8.json")
+cred = credentials.Certificate(r"C:\Users\Niranjan\Downloads\temp\FirebaseExporter\confg.json")
 firebase_admin.initialize_app(cred)
 
 # Initialize Firestore
@@ -19,6 +20,24 @@ main_collection = db.collection("2025")
 
 # Fetch all colleges
 colleges = list(main_collection.stream())  # Convert to list for progress tracking
+
+def fix_base64_padding(encoded_str):
+    """Ensures Base64 string has proper padding"""
+    missing_padding = len(encoded_str) % 4
+    if missing_padding:
+        encoded_str += '=' * (4 - missing_padding)
+    return encoded_str
+
+def extract_format_and_data(base64_string):
+    """Extracts the format (png, jpg, etc.) and cleans Base64 data"""
+    if base64_string.startswith("data:image"):
+        mime_type, base64_data = base64_string.split(",", 1)  # Split at first comma
+        image_format = mime_type.split("/")[1].split(";")[0]  # Extract format (jpeg, png, etc.)
+    else:
+        image_format = None
+        base64_data = base64_string  # If no prefix, assume raw Base64
+
+    return image_format, base64_data
 
 with Progress() as progress:
     college_task = progress.add_task("[cyan]Processing Colleges...", total=len(colleges))
@@ -45,14 +64,35 @@ with Progress() as progress:
             participant_name = participant.id  # Extract participant name
             participant_data = participant.to_dict()  # Convert Firestore data to dict
 
-            # Check if 'wNo' exists
-            if 'wNo' in participant_data:
+            # Check if 'tImg' exists
+            if 'tImg' in participant_data:
                 try:
-                    # Decode base64 content
-                    image_data = base64.b64decode(participant_data['wNo'])
+                    base64_string = participant_data['tImg'].strip()  # Remove accidental spaces
 
-                    # Save the image
-                    image_path = os.path.join(college_path, f"{participant_name}.png")
+                    # ✅ Debugging: Print first few characters of base64 string
+                    console.print(f"[cyan]Processing {participant_name} - Base64 starts with:[/] {base64_string[:30]}...")
+
+                    # Extract format and clean Base64 data
+                    image_format, base64_data = extract_format_and_data(base64_string)
+
+                    # Ensure proper padding
+                    base64_data = fix_base64_padding(base64_data)
+
+                    # Decode Base64
+                    image_data = base64.b64decode(base64_data)
+
+                    # If no format is detected from the string, detect from image bytes
+                    if not image_format:
+                        image_format = imghdr.what(None, h=image_data)  # Detect format from bytes
+                        if not image_format:
+                            raise ValueError("❌ Decoded data is not a valid image format")
+
+                    # Convert 'jpeg' to 'jpg' for correct file extension
+                    if image_format == "jpeg":
+                        image_format = "jpg"
+
+                    # Save the image with the correct extension
+                    image_path = os.path.join(college_path, f"{participant_name}.{image_format}")
                     with open(image_path, "wb") as image_file:
                         image_file.write(image_data)
 
